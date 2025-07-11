@@ -1,0 +1,71 @@
+# ============================================================================
+# PROXY-SAAS-SYSTEM - Upstream Proxy Configuration
+# ============================================================================
+# 
+# Format: host:port:username:password
+# Lines starting with # are ignored
+# Empty lines are ignored
+# 
+# This file supports complex usernames with colons (session-based proxies)
+# The system will correctly parse usernames like: user-session-12345-country-US
+# 
+# Examples:
+# proxy1.example.com:8080:username1:password1
+# proxy2.example.com:8080:username2:password2
+# proxy3.example.com:8080:user-session-12345-country-US:password3
+# 
+# ============================================================================
+
+# Sample proxies (replace with your real proxies)
+# Remove these examples and add your actual upstream proxy servers
+
+# Basic proxy format
+# proxy1.example.com:8080:username1:password1
+# proxy2.example.com:8080:username2:password2
+
+# Session-based proxies with complex usernames (like your reference)
+# res-unlimited-8514773f.plainproxies.com:8080:SEsVVB4CVG06-country-US-session-312520-ttl-60:Asdasd312
+# res-unlimited-8514773f.plainproxies.com:8080:SEsVVB4CVG06-country-US-session-654580-ttl-60:Asdasd312
+
+# Rotating proxies
+# rotating-proxy.example.com:8080:user-rotate-1:password
+# rotating-proxy.example.com:8080:user-rotate-2:password
+
+# Geographic proxies
+# us-proxy.example.com:8080:user-us-1:password
+# eu-proxy.example.com:8080:user-eu-1:password
+# asia-proxy.example.com:8080:user-asia-1:password
+
+# High-performance proxies
+# premium-proxy1.example.com:8080:premium-user-1:password
+# premium-proxy2.example.com:8080:premium-user-2:password
+
+# ============================================================================
+# INSTRUCTIONS FOR ADDING YOUR PROXIES
+# ============================================================================
+# 
+# 1. Remove all example entries above
+# 2. Add your real proxy servers in the format: host:port:username:password
+# 3. You can add up to 1000 proxies (ports 4000-4999)
+# 4. Each proxy will be assigned a local port starting from 4000
+# 5. Customers will connect to your-domain.com:4000, your-domain.com:4001, etc.
+# 
+# Example with real proxies:
+# 
+# proxy-server-1.yourprovider.com:8080:your_username_1:your_password_1
+# proxy-server-2.yourprovider.com:8080:your_username_2:your_password_2
+# proxy-server-3.yourprovider.com:8080:your_username_3:your_password_3
+# 
+# For session-based proxies (like PlainProxies, Bright Data, etc.):
+# 
+# session-proxy.provider.com:8080:username-session-12345-country-US:password
+# session-proxy.provider.com:8080:username-session-67890-country-UK:password
+# 
+# ============================================================================
+
+# Add your real proxies below this line:
+
+# Example entries (remove these and add your real proxies)
+proxy1.example.com:8080:user1:pass1
+proxy2.example.com:8080:user2:pass2
+proxy3.example.com:8080:user3:pass3
