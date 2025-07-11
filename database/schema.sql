@@ -332,8 +332,8 @@ END //
 
 DELIMITER ;
 
--- Enable event scheduler
-SET GLOBAL event_scheduler = ON;
+-- Enable event scheduler (requires SUPER privilege - will be done by deployment script)
+-- SET GLOBAL event_scheduler = ON;
 
 -- ============================================================================
 -- VIEWS FOR COMMON QUERIES

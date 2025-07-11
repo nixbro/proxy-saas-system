@@ -267,6 +267,15 @@ setup_directories() {
 setup_database() {
     log_info "Setting up database..."
     
+    # Configure MariaDB
+    cat >> /etc/mysql/mariadb.conf.d/50-server.cnf <<EOF
+
+# Proxy SaaS System Configuration
+event_scheduler = ON
+max_connections = 500
+innodb_buffer_pool_size = 256M
+EOF
+
     # Start MariaDB service
     systemctl start mariadb
     systemctl enable mariadb
@@ -289,7 +298,10 @@ EOF
     
     # Import database schema
     mysql -u proxy_user -p"secure_password_change_this" proxy_saas < "$INSTALL_DIR/database/schema.sql"
-    
+
+    # Enable event scheduler with root privileges
+    mysql -u root -p"secure_root_password_change_this" -e "SET GLOBAL event_scheduler = ON;" || log_warning "Could not enable event scheduler (requires SUPER privilege)"
+
     log_success "Database configured"
 }
 
