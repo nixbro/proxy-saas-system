@@ -24,6 +24,20 @@ WEB_DIR="/var/www/html/$PROJECT_NAME"
 SERVICE_USER="proxy-saas"
 LOG_FILE="/var/log/$PROJECT_NAME/deploy.log"
 
+# Version and build information
+VERSION="2.0.0"
+BUILD_DATE=$(date '+%Y-%m-%d %H:%M:%S')
+REQUIRED_DISK_SPACE_GB=5
+REQUIRED_MEMORY_MB=2048
+MIN_PHP_VERSION="8.1"
+MIN_MYSQL_VERSION="10.6"
+
+# Feature flags
+ENABLE_SSL_AUTO=true
+ENABLE_MONITORING=true
+ENABLE_BACKUP=true
+ENABLE_CLUSTERING=false
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -32,37 +46,86 @@ BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-# Logging functions
+# Enhanced logging functions with better formatting
 log_info() {
-    echo -e "${BLUE}[INFO]${NC} $1"
-    # Only log to file if directory exists
-    [[ -d "$(dirname "$LOG_FILE")" ]] && echo "[$(date '+%Y-%m-%d %H:%M:%S')] [INFO] $1" >> "$LOG_FILE"
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    echo -e "${BLUE}[INFO]${NC} ${timestamp} - $1"
+    [[ -d "$(dirname "$LOG_FILE")" ]] && echo "[$timestamp] [INFO] $1" >> "$LOG_FILE"
 }
 
 log_success() {
-    echo -e "${GREEN}[SUCCESS]${NC} $1"
-    [[ -d "$(dirname "$LOG_FILE")" ]] && echo "[$(date '+%Y-%m-%d %H:%M:%S')] [SUCCESS] $1" >> "$LOG_FILE"
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    echo -e "${GREEN}[SUCCESS]${NC} ${timestamp} - $1"
+    [[ -d "$(dirname "$LOG_FILE")" ]] && echo "[$timestamp] [SUCCESS] $1" >> "$LOG_FILE"
 }
 
 log_warning() {
-    echo -e "${YELLOW}[WARNING]${NC} $1"
-    [[ -d "$(dirname "$LOG_FILE")" ]] && echo "[$(date '+%Y-%m-%d %H:%M:%S')] [WARNING] $1" >> "$LOG_FILE"
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    echo -e "${YELLOW}[WARNING]${NC} ${timestamp} - $1"
+    [[ -d "$(dirname "$LOG_FILE")" ]] && echo "[$timestamp] [WARNING] $1" >> "$LOG_FILE"
 }
 
 log_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
-    [[ -d "$(dirname "$LOG_FILE")" ]] && echo "[$(date '+%Y-%m-%d %H:%M:%S')] [ERROR] $1" >> "$LOG_FILE"
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    echo -e "${RED}[ERROR]${NC} ${timestamp} - $1"
+    [[ -d "$(dirname "$LOG_FILE")" ]] && echo "[$timestamp] [ERROR] $1" >> "$LOG_FILE"
 }
 
-# Error handling
+log_debug() {
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    [[ "${DEBUG:-false}" == "true" ]] && echo -e "${CYAN}[DEBUG]${NC} ${timestamp} - $1"
+    [[ -d "$(dirname "$LOG_FILE")" ]] && echo "[$timestamp] [DEBUG] $1" >> "$LOG_FILE"
+}
+
+log_step() {
+    local step_num=$1
+    local total_steps=$2
+    local description=$3
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    echo -e "${CYAN}[STEP $step_num/$total_steps]${NC} ${timestamp} - $description"
+    [[ -d "$(dirname "$LOG_FILE")" ]] && echo "[$timestamp] [STEP $step_num/$total_steps] $description" >> "$LOG_FILE"
+}
+
+# Enhanced error handling with cleanup
 handle_error() {
     local line_number=$1
-    log_error "Deployment failed at line $line_number"
+    local exit_code=$?
+    log_error "Deployment failed at line $line_number with exit code $exit_code"
     log_error "Check the log file: $LOG_FILE"
-    exit 1
+
+    # Cleanup on error
+    cleanup_on_error
+
+    exit $exit_code
+}
+
+cleanup_on_error() {
+    log_info "Performing cleanup after error..."
+
+    # Stop any services that might be running
+    systemctl stop "$PROJECT_NAME" 2>/dev/null || true
+
+    # Remove incomplete installations
+    if [[ -f "/tmp/proxy_install_in_progress" ]]; then
+        log_warning "Incomplete installation detected, cleaning up..."
+        rm -f "/tmp/proxy_install_in_progress"
+    fi
+
+    log_info "Cleanup completed"
 }
 
 trap 'handle_error $LINENO' ERR
+
+# Progress tracking
+create_progress_marker() {
+    local step=$1
+    echo "$step" > "/tmp/proxy_install_progress"
+    touch "/tmp/proxy_install_in_progress"
+}
+
+remove_progress_marker() {
+    rm -f "/tmp/proxy_install_progress" "/tmp/proxy_install_in_progress"
+}
 
 # Check if running as root
 check_root() {
@@ -116,7 +179,9 @@ install_dependencies() {
                 ufw \
                 certbot \
                 python3-certbot-nginx \
-                bc
+                bc \
+                net-tools \
+                procps
             ;;
         centos|rhel|fedora)
             if command -v dnf >/dev/null 2>&1; then
@@ -706,20 +771,12 @@ EOF
 setup_systemd_service() {
     log_info "Setting up systemd service..."
 
-    # Detect GoProxy version and choose appropriate script
-    local goproxy_version=$(grep "GOPROXY_VERSION=" "$INSTALL_DIR/.env" 2>/dev/null | cut -d'=' -f2 || echo "free")
-    local script_name="proxy_pool_manager.sh"
-    local service_description="Proxy SaaS System - Proxy Pool Manager"
+    # Use the enhanced proxy manager that auto-detects version
+    local script_name="proxy_pool_manager_enhanced.sh"
+    local service_description="Proxy SaaS System - Enhanced Proxy Pool Manager v2.0"
 
-    if [[ "$goproxy_version" == "free" ]]; then
-        script_name="proxy_pool_manager_free.sh"
-        service_description="Proxy SaaS System - Free Version Proxy Pool Manager"
-        log_info "Configuring systemd service for free GoProxy version"
-    else
-        script_name="proxy_pool_manager.sh"
-        service_description="Proxy SaaS System - Commercial Proxy Pool Manager"
-        log_info "Configuring systemd service for commercial GoProxy version"
-    fi
+    log_info "Configuring systemd service with enhanced proxy manager"
+    log_info "Enhanced manager will auto-detect GoProxy version and adapt accordingly"
 
     cat > "/etc/systemd/system/$PROJECT_NAME.service" <<EOF
 [Unit]
@@ -747,9 +804,10 @@ EOF
     # Ensure the chosen script is executable
     chmod +x "$INSTALL_DIR/$script_name"
 
-    # Also make both scripts executable for flexibility
+    # Make all proxy manager scripts executable for flexibility
     chmod +x "$INSTALL_DIR/proxy_pool_manager.sh" 2>/dev/null || true
     chmod +x "$INSTALL_DIR/proxy_pool_manager_free.sh" 2>/dev/null || true
+    chmod +x "$INSTALL_DIR/proxy_pool_manager_enhanced.sh" 2>/dev/null || true
 
     # Reload systemd and enable service
     systemctl daemon-reload
@@ -849,15 +907,12 @@ show_summary() {
     echo "   🖥️  Server IP: $server_ip"
     echo ""
     # Detect GoProxy version for summary
-    local goproxy_version=$(grep "GOPROXY_VERSION=" "$INSTALL_DIR/.env" 2>/dev/null | cut -d'=' -f2 || echo "unknown")
-    local proxy_script="proxy_pool_manager.sh"
-    if [[ "$goproxy_version" == "free" ]]; then
-        proxy_script="proxy_pool_manager_free.sh"
-    fi
+    local goproxy_version=$(grep "GOPROXY_VERSION=" "$INSTALL_DIR/.env" 2>/dev/null | cut -d'=' -f2 || echo "auto-detect")
 
-    echo "GoProxy Configuration:"
-    echo "   Version: $goproxy_version"
-    echo "   Manager Script: $proxy_script"
+    echo "Enhanced Proxy Configuration:"
+    echo "   GoProxy Version: $goproxy_version"
+    echo "   Manager Script: proxy_pool_manager_enhanced.sh (v2.0)"
+    echo "   Features: Auto-detection, Adaptive config, Health monitoring"
     echo "   Proxy Ports: 4000-4010 (free) or 4000-4999 (commercial)"
     echo ""
     echo "API Endpoints:"
@@ -900,37 +955,104 @@ show_summary() {
     echo "============================================================================"
 }
 
-# Validate system requirements
+# Comprehensive system validation
 validate_system() {
-    log_info "Validating system requirements..."
+    log_step 1 12 "Validating system requirements..."
+    create_progress_marker "validation"
 
-    # Check available disk space (need at least 2GB)
-    local available_space=$(df / | awk 'NR==2 {print $4}')
-    if [[ $available_space -lt 2097152 ]]; then  # 2GB in KB
-        log_error "Insufficient disk space. Need at least 2GB free."
-        exit 1
+    local validation_errors=0
+    local validation_warnings=0
+
+    # Check OS compatibility
+    if [[ ! -f /etc/os-release ]]; then
+        log_error "Cannot detect operating system"
+        ((validation_errors++))
+    else
+        source /etc/os-release
+        case $ID in
+            ubuntu|debian)
+                log_success "Operating system: $PRETTY_NAME (supported)"
+                ;;
+            centos|rhel|fedora)
+                log_warning "Operating system: $PRETTY_NAME (experimental support)"
+                ((validation_warnings++))
+                ;;
+            *)
+                log_error "Operating system: $PRETTY_NAME (unsupported)"
+                ((validation_errors++))
+                ;;
+        esac
     fi
 
-    # Check available memory (need at least 1GB)
-    local available_memory=$(free -m | awk 'NR==2{print $7}')
-    if [[ $available_memory -lt 1024 ]]; then
-        log_warning "Low available memory (${available_memory}MB). Recommended: 1GB+"
+    # Check available disk space
+    local available_space_gb=$(df / | awk 'NR==2 {printf "%.1f", $4/1024/1024}')
+    if (( $(echo "$available_space_gb < $REQUIRED_DISK_SPACE_GB" | bc -l) )); then
+        log_error "Insufficient disk space: ${available_space_gb}GB available, ${REQUIRED_DISK_SPACE_GB}GB required"
+        ((validation_errors++))
+    else
+        log_success "Disk space: ${available_space_gb}GB available"
     fi
 
-    # Check if ports are available
+    # Check available memory
+    local available_memory=$(free -m | awk 'NR==2{print $2}')
+    if [[ $available_memory -lt $REQUIRED_MEMORY_MB ]]; then
+        log_warning "Low memory: ${available_memory}MB available, ${REQUIRED_MEMORY_MB}MB recommended"
+        ((validation_warnings++))
+    else
+        log_success "Memory: ${available_memory}MB available"
+    fi
+
+    # Check CPU cores
+    local cpu_cores=$(nproc)
+    if [[ $cpu_cores -lt 2 ]]; then
+        log_warning "Low CPU cores: $cpu_cores (2+ recommended for production)"
+        ((validation_warnings++))
+    else
+        log_success "CPU cores: $cpu_cores"
+    fi
+
+    # Check network connectivity
+    if ! ping -c 1 8.8.8.8 >/dev/null 2>&1; then
+        log_error "No internet connectivity detected"
+        ((validation_errors++))
+    else
+        log_success "Internet connectivity: OK"
+    fi
+
+    # Check required ports
     local ports_in_use=()
-    for port in 80 443 8889 3306 6379; do
+    local required_ports=(80 443 8889 3306 6379)
+    for port in "${required_ports[@]}"; do
         if netstat -ln 2>/dev/null | grep -q ":$port "; then
             ports_in_use+=($port)
         fi
     done
 
     if [[ ${#ports_in_use[@]} -gt 0 ]]; then
-        log_warning "Some required ports are in use: ${ports_in_use[*]}"
-        log_warning "Installation will continue but may encounter conflicts"
+        log_warning "Ports in use: ${ports_in_use[*]} (may cause conflicts)"
+        ((validation_warnings++))
+    else
+        log_success "Required ports: Available"
     fi
 
-    log_success "System validation completed"
+    # Check if running as root
+    if [[ $EUID -ne 0 ]]; then
+        log_error "This script must be run as root (use sudo)"
+        ((validation_errors++))
+    else
+        log_success "Root privileges: OK"
+    fi
+
+    # Summary
+    if [[ $validation_errors -gt 0 ]]; then
+        log_error "System validation failed with $validation_errors errors"
+        exit 1
+    elif [[ $validation_warnings -gt 0 ]]; then
+        log_warning "System validation completed with $validation_warnings warnings"
+        log_info "Installation will continue but may encounter issues"
+    else
+        log_success "System validation passed all checks"
+    fi
 }
 
 # Test installation
