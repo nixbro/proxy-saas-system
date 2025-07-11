@@ -97,9 +97,11 @@ install_dependencies() {
                 php8.1-mysql \
                 php8.1-redis \
                 php8.1-curl \
-                php8.1-json \
+                php8.1-cli \
                 php8.1-mbstring \
                 php8.1-xml \
+                php8.1-zip \
+                php8.1-gd \
                 curl \
                 wget \
                 unzip \
@@ -108,7 +110,8 @@ install_dependencies() {
                 fail2ban \
                 ufw \
                 certbot \
-                python3-certbot-nginx
+                python3-certbot-nginx \
+                bc
             ;;
         centos|rhel|fedora)
             if command -v dnf >/dev/null 2>&1; then
@@ -237,17 +240,13 @@ setup_database() {
     systemctl start mariadb
     systemctl enable mariadb
     
-    # Secure MariaDB installation
-    mysql_secure_installation <<EOF
-
-y
-secure_root_password_change_this
-secure_root_password_change_this
-y
-y
-y
-y
-EOF
+    # Set MariaDB root password
+    mysql -e "ALTER USER 'root'@'localhost' IDENTIFIED BY 'secure_root_password_change_this';" || true
+    mysql -u root -p"secure_root_password_change_this" -e "DELETE FROM mysql.user WHERE User='';" || true
+    mysql -u root -p"secure_root_password_change_this" -e "DELETE FROM mysql.user WHERE User='root' AND Host NOT IN ('localhost', '127.0.0.1', '::1');" || true
+    mysql -u root -p"secure_root_password_change_this" -e "DROP DATABASE IF EXISTS test;" || true
+    mysql -u root -p"secure_root_password_change_this" -e "DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';" || true
+    mysql -u root -p"secure_root_password_change_this" -e "FLUSH PRIVILEGES;" || true
     
     # Create database and user
     mysql -u root -p"secure_root_password_change_this" <<EOF
