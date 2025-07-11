@@ -543,15 +543,47 @@ setup_environment() {
     local db_password="secure_password_change_this"  # Keep consistent with database setup
     local redis_password=$(openssl rand -base64 32 2>/dev/null || echo "redis_password_$(date +%s)")
 
-    # Update environment file with current server IP
-    local server_ip=$(curl -s ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}' || echo "127.0.0.1")
+    # Update environment file with current server IP (prefer IPv4)
+    local server_ip=$(curl -4 -s ifconfig.me 2>/dev/null || curl -s ifconfig.me 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' || hostname -I | awk '{print $1}' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' || echo "127.0.0.1")
 
-    # Update environment file
-    sed -i "s/APP_ENV=development/APP_ENV=production/" "$INSTALL_DIR/.env"
-    sed -i "s/APP_DEBUG=true/APP_DEBUG=false/" "$INSTALL_DIR/.env"
-    sed -i "s/SERVER_HOST=proxy.example.com/SERVER_HOST=$server_ip/" "$INSTALL_DIR/.env"
-    sed -i "s/DB_PASS=secure_password_change_this/DB_PASS=$db_password/" "$INSTALL_DIR/.env"
-    sed -i "s/REDIS_PASSWORD=/REDIS_PASSWORD=$redis_password/" "$INSTALL_DIR/.env"
+    # Update environment file (using | as delimiter to avoid issues with dots, slashes, and colons)
+    log_info "Configuring environment with server IP: $server_ip"
+
+    # Use safer sed commands with error checking and proper escaping
+    sed -i "s|APP_ENV=development|APP_ENV=production|g" "$INSTALL_DIR/.env" || log_warning "Could not update APP_ENV"
+    sed -i "s|APP_DEBUG=true|APP_DEBUG=false|g" "$INSTALL_DIR/.env" || log_warning "Could not update APP_DEBUG"
+    sed -i "s|SERVER_HOST=proxy\.example\.com|SERVER_HOST=$server_ip|g" "$INSTALL_DIR/.env" || log_warning "Could not update SERVER_HOST"
+    sed -i "s|DB_PASS=secure_password_change_this|DB_PASS=$db_password|g" "$INSTALL_DIR/.env" || log_warning "Could not update DB_PASS"
+    sed -i "s|REDIS_PASSWORD=|REDIS_PASSWORD=$redis_password|g" "$INSTALL_DIR/.env" || log_warning "Could not update REDIS_PASSWORD"
+
+    # Additional fallback for SERVER_HOST if sed failed
+    if ! grep -q "SERVER_HOST=$server_ip" "$INSTALL_DIR/.env"; then
+        log_warning "Sed failed, using alternative method for SERVER_HOST"
+        # Use a more robust approach
+        if grep -q "SERVER_HOST=" "$INSTALL_DIR/.env"; then
+            # Replace existing SERVER_HOST line
+            local temp_file=$(mktemp)
+            while IFS= read -r line; do
+                if [[ $line =~ ^SERVER_HOST= ]]; then
+                    echo "SERVER_HOST=$server_ip"
+                else
+                    echo "$line"
+                fi
+            done < "$INSTALL_DIR/.env" > "$temp_file"
+            mv "$temp_file" "$INSTALL_DIR/.env"
+        else
+            # Add SERVER_HOST if it doesn't exist
+            echo "SERVER_HOST=$server_ip" >> "$INSTALL_DIR/.env"
+        fi
+    fi
+
+    # Verify the configuration was updated
+    if grep -q "APP_ENV=production" "$INSTALL_DIR/.env" && grep -q "SERVER_HOST=$server_ip" "$INSTALL_DIR/.env"; then
+        log_success "Environment configuration updated successfully"
+    else
+        log_warning "Environment configuration may not have been updated correctly"
+        log_info "Please manually verify: $INSTALL_DIR/.env"
+    fi
 
     # Set permissions
     chmod 600 "$INSTALL_DIR/.env"
@@ -587,10 +619,13 @@ StandardError=journal
 WantedBy=multi-user.target
 EOF
     
+    # Ensure proxy_pool_manager.sh is executable
+    chmod +x "$INSTALL_DIR/proxy_pool_manager.sh"
+
     # Reload systemd and enable service
     systemctl daemon-reload
     systemctl enable "$PROJECT_NAME"
-    
+
     log_success "Systemd service configured"
 }
 
@@ -633,12 +668,23 @@ setup_ssl() {
     
     local domain=$(grep "SERVER_HOST=" "$INSTALL_DIR/.env" | cut -d'=' -f2)
     
-    if [[ "$domain" != "proxy.example.com" ]]; then
-        # Request Let's Encrypt certificate
-        certbot --nginx -d "$domain" --non-interactive --agree-tos --email "admin@$domain"
-        log_success "SSL certificate configured for $domain"
+    # Check if it's a valid domain (not IP address)
+    if [[ "$domain" != "127.0.0.1" && "$domain" != "localhost" && "$domain" != "proxy.example.com" && ! "$domain" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ && ! "$domain" =~ ^[0-9a-fA-F:]+$ && "$domain" =~ ^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
+        log_info "Configuring SSL certificate for domain: $domain"
+        if certbot --nginx -d "$domain" --non-interactive --agree-tos --email "admin@$domain" 2>/dev/null; then
+            log_success "SSL certificate configured for $domain"
+        else
+            log_warning "SSL certificate setup failed for $domain"
+            log_warning "This is normal for new domains or DNS propagation issues"
+            log_info "You can manually configure SSL later with: sudo certbot --nginx -d $domain"
+        fi
     else
-        log_warning "SSL certificate not configured - update SERVER_HOST in .env file"
+        log_info "Skipping SSL certificate setup (IP address detected: $domain)"
+        log_info "SSL certificates require a valid domain name"
+        log_info "To enable SSL later:"
+        log_info "  1. Get a domain name and point it to this server"
+        log_info "  2. Update SERVER_HOST in $INSTALL_DIR/.env"
+        log_info "  3. Run: sudo certbot --nginx -d yourdomain.com"
     fi
 }
 
@@ -657,7 +703,7 @@ run_tests() {
 
 # Show deployment summary
 show_summary() {
-    local server_ip=$(curl -s ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}' || echo "127.0.0.1")
+    local server_ip=$(curl -4 -s ifconfig.me 2>/dev/null || curl -s ifconfig.me 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' || hostname -I | awk '{print $1}' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' || echo "127.0.0.1")
 
     echo ""
     echo "============================================================================"
@@ -815,8 +861,35 @@ test_installation() {
         return 0
     else
         log_warning "Installation test: Some issues detected"
+        log_info "You can manually check and fix issues after deployment"
         return 1
     fi
+}
+
+# Post-installation setup
+post_installation_setup() {
+    log_info "Running post-installation setup..."
+
+    # Ensure all services are started
+    systemctl start mariadb || log_warning "MariaDB failed to start"
+    systemctl start redis-server || log_warning "Redis failed to start"
+    systemctl start nginx || log_warning "Nginx failed to start"
+    systemctl start php8.1-fpm || log_warning "PHP-FPM failed to start"
+
+    # Import database schema if not already done
+    if ! mysql -u proxy_user -p"secure_password_change_this" proxy_saas -e "SHOW TABLES;" 2>/dev/null | grep -q "users"; then
+        log_info "Importing database schema..."
+        mysql -u proxy_user -p"secure_password_change_this" proxy_saas < "$INSTALL_DIR/database/schema.sql" || log_warning "Database schema import failed"
+    else
+        log_info "Database schema already imported"
+    fi
+
+    # Set proper permissions
+    chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR"
+    chown -R "www-data:www-data" "$WEB_DIR"
+    chmod +x "$INSTALL_DIR"/*.sh
+
+    log_success "Post-installation setup completed"
 }
 
 # Main installation function
@@ -837,6 +910,7 @@ install_system() {
     setup_systemd_service
     setup_firewall
     setup_ssl
+    post_installation_setup
     test_installation
 
     log_success "Installation completed successfully"
