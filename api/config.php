@@ -10,8 +10,8 @@
  */
 
 // Prevent direct access
-if (!defined('PHP_SAPI') && php_sapi_name() !== 'cli') {
-    if (basename($_SERVER['SCRIPT_NAME']) === basename(__FILE__)) {
+if (php_sapi_name() !== 'cli') {
+    if (basename($_SERVER['SCRIPT_NAME'] ?? '') === basename(__FILE__)) {
         http_response_code(403);
         exit('Direct access forbidden');
     }

@@ -409,4 +409,23 @@ function logSecurityEvent($eventType, $clientIp, $username, $details = []) {
         error_log("Failed to log security event: " . $e->getMessage());
     }
 }
+
+/**
+ * Enhanced logging function
+ */
+function logError($message) {
+    $timestamp = date('Y-m-d H:i:s');
+    $logMessage = "[$timestamp] AUTH ERROR: $message\n";
+
+    // Log to file
+    $logFile = __DIR__ . '/../../logs/api/auth.log';
+    $logDir = dirname($logFile);
+    if (!is_dir($logDir)) {
+        mkdir($logDir, 0755, true);
+    }
+    file_put_contents($logFile, $logMessage, FILE_APPEND | LOCK_EX);
+
+    // Also log to system error log
+    error_log($logMessage);
+}
 ?>

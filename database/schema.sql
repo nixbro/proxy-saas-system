@@ -15,7 +15,7 @@
 -- ============================================================================
 
 -- Users table with comprehensive plan management
-CREATE TABLE users (
+CREATE TABLE IF NOT EXISTS users (
     id INT PRIMARY KEY AUTO_INCREMENT,
     username VARCHAR(100) NOT NULL UNIQUE,
     password VARCHAR(255) NOT NULL COMMENT 'bcrypt hashed password',
@@ -64,7 +64,7 @@ CREATE TABLE users (
 -- ============================================================================
 
 -- User IP whitelist for authentication
-CREATE TABLE user_ip_whitelist (
+CREATE TABLE IF NOT EXISTS user_ip_whitelist (
     id INT PRIMARY KEY AUTO_INCREMENT,
     user_id INT NOT NULL,
     username VARCHAR(100) NOT NULL,
@@ -94,7 +94,7 @@ CREATE TABLE user_ip_whitelist (
 -- ============================================================================
 
 -- Upstream proxy servers
-CREATE TABLE upstream_proxies (
+CREATE TABLE IF NOT EXISTS upstream_proxies (
     id INT PRIMARY KEY AUTO_INCREMENT,
     host VARCHAR(255) NOT NULL,
     port INT NOT NULL,
@@ -120,7 +120,7 @@ CREATE TABLE upstream_proxies (
 -- ============================================================================
 
 -- Active user sessions (mirrors Redis data)
-CREATE TABLE user_sessions (
+CREATE TABLE IF NOT EXISTS user_sessions (
     id BIGINT PRIMARY KEY AUTO_INCREMENT,
     username VARCHAR(100) NOT NULL,
     client_ip VARCHAR(45) NOT NULL,
@@ -153,7 +153,7 @@ CREATE TABLE user_sessions (
 -- ============================================================================
 
 -- Traffic logs for billing (inserted every 5 seconds by traffic.php)
-CREATE TABLE traffic_logs (
+CREATE TABLE IF NOT EXISTS traffic_logs (
     id BIGINT PRIMARY KEY AUTO_INCREMENT,
     username VARCHAR(100) NOT NULL,
     client_ip VARCHAR(45) NOT NULL,
@@ -178,7 +178,7 @@ CREATE TABLE traffic_logs (
 -- ============================================================================
 
 -- Admin authentication tokens
-CREATE TABLE admin_tokens (
+CREATE TABLE IF NOT EXISTS admin_tokens (
     id INT PRIMARY KEY AUTO_INCREMENT,
     token_hash VARCHAR(64) NOT NULL UNIQUE COMMENT 'SHA-256 hash of token',
     name VARCHAR(100) NOT NULL COMMENT 'Human-readable token name',
@@ -195,7 +195,7 @@ CREATE TABLE admin_tokens (
 );
 
 -- Security events and audit log
-CREATE TABLE security_events (
+CREATE TABLE IF NOT EXISTS security_events (
     id BIGINT PRIMARY KEY AUTO_INCREMENT,
     event_type VARCHAR(50) NOT NULL,
     username VARCHAR(100),
@@ -213,7 +213,7 @@ CREATE TABLE security_events (
 );
 
 -- Rate limiting for brute force protection
-CREATE TABLE auth_rate_limit (
+CREATE TABLE IF NOT EXISTS auth_rate_limit (
     id BIGINT PRIMARY KEY AUTO_INCREMENT,
     client_ip VARCHAR(45) NOT NULL,
     endpoint VARCHAR(100) NOT NULL,
@@ -230,7 +230,7 @@ CREATE TABLE auth_rate_limit (
 -- ============================================================================
 
 -- System health and performance metrics
-CREATE TABLE system_metrics (
+CREATE TABLE IF NOT EXISTS system_metrics (
     id BIGINT PRIMARY KEY AUTO_INCREMENT,
     metric_name VARCHAR(100) NOT NULL,
     metric_value DECIMAL(15,4) NOT NULL,
@@ -242,7 +242,7 @@ CREATE TABLE system_metrics (
 );
 
 -- Log file tracking
-CREATE TABLE log_files (
+CREATE TABLE IF NOT EXISTS log_files (
     id INT PRIMARY KEY AUTO_INCREMENT,
     file_path VARCHAR(500) NOT NULL,
     file_type ENUM('proxy', 'api', 'security', 'system') NOT NULL,
@@ -263,23 +263,23 @@ CREATE TABLE log_files (
 -- ============================================================================
 
 -- Insert default admin token (token: admin_token_12345)
-INSERT INTO admin_tokens (token_hash, name, scopes, created_by) VALUES 
+INSERT IGNORE INTO admin_tokens (token_hash, name, scopes, created_by) VALUES
 ('e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855', 'Default Admin Token', '["users", "stats", "logs", "admin"]', 'system');
 
 -- Insert sample user plans
-INSERT INTO users (username, password, email, api_key, plan_name, max_threads, max_qps, max_bandwidth_bps, quota_bytes, status) VALUES
+INSERT IGNORE INTO users (username, password, email, api_key, plan_name, max_threads, max_qps, max_bandwidth_bps, quota_bytes, status) VALUES
 ('demo_basic', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'demo@example.com', 'demo_api_key_basic_123', 'basic', 10, 10, 1048576, 1073741824, 'active'),
 ('demo_pro', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'pro@example.com', 'demo_api_key_pro_456', 'pro', 50, 50, 10485760, 10737418240, 'active'),
 ('demo_enterprise', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'enterprise@example.com', 'demo_api_key_enterprise_789', 'enterprise', 200, 200, 104857600, 107374182400, 'active');
 
 -- Insert sample IP whitelist
-INSERT INTO user_ip_whitelist (user_id, username, ip_address, description) VALUES
+INSERT IGNORE INTO user_ip_whitelist (user_id, username, ip_address, description) VALUES
 (1, 'demo_basic', '127.0.0.1', 'Localhost testing'),
 (2, 'demo_pro', '192.168.1.100', 'Office IP'),
 (3, 'demo_enterprise', '203.0.113.0', 'Corporate IP');
 
 -- Insert sample upstream proxies
-INSERT INTO upstream_proxies (host, port, username, password, local_port, status) VALUES
+INSERT IGNORE INTO upstream_proxies (host, port, username, password, local_port, status) VALUES
 ('proxy1.example.com', 3128, 'user1', 'pass1', 4000, 'active'),
 ('proxy2.example.com', 3128, 'user2', 'pass2', 4001, 'active'),
 ('proxy3.example.com', 3128, 'user3', 'pass3', 4002, 'active');
@@ -297,6 +297,7 @@ ALTER TABLE security_events ENGINE=InnoDB ROW_FORMAT=COMPRESSED;
 DELIMITER //
 
 -- Cleanup old traffic logs (keep 90 days)
+DROP EVENT IF EXISTS cleanup_old_traffic_logs //
 CREATE EVENT cleanup_old_traffic_logs
 ON SCHEDULE EVERY 1 DAY
 DO
@@ -305,6 +306,7 @@ BEGIN
 END //
 
 -- Cleanup old security events (keep 180 days)
+DROP EVENT IF EXISTS cleanup_old_security_events //
 CREATE EVENT cleanup_old_security_events
 ON SCHEDULE EVERY 1 DAY
 DO
@@ -313,6 +315,7 @@ BEGIN
 END //
 
 -- Cleanup expired rate limits
+DROP EVENT IF EXISTS cleanup_expired_rate_limits //
 CREATE EVENT cleanup_expired_rate_limits
 ON SCHEDULE EVERY 1 HOUR
 DO
@@ -321,12 +324,13 @@ BEGIN
 END //
 
 -- Reset monthly quotas (run on 1st of each month)
+DROP EVENT IF EXISTS reset_monthly_quotas //
 CREATE EVENT reset_monthly_quotas
-ON SCHEDULE EVERY 1 MONTH STARTS '2024-01-01 00:00:00'
+ON SCHEDULE EVERY 1 MONTH STARTS '2025-01-01 00:00:00'
 DO
 BEGIN
     UPDATE users SET bytes_used = 0 WHERE status = 'active';
-    INSERT INTO system_metrics (metric_name, metric_value, tags) 
+    INSERT INTO system_metrics (metric_name, metric_value, tags)
     VALUES ('monthly_quota_reset', (SELECT COUNT(*) FROM users WHERE status = 'active'), '{"event": "quota_reset"}');
 END //
 
@@ -340,7 +344,7 @@ DELIMITER ;
 -- ============================================================================
 
 -- Active users with current usage
-CREATE VIEW active_users_stats AS
+CREATE OR REPLACE VIEW active_users_stats AS
 SELECT 
     u.username,
     u.plan_name,
@@ -359,7 +363,7 @@ WHERE u.status = 'active'
 GROUP BY u.id;
 
 -- Traffic summary by user (last 24 hours)
-CREATE VIEW traffic_summary_24h AS
+CREATE OR REPLACE VIEW traffic_summary_24h AS
 SELECT 
     username,
     COUNT(*) as total_requests,
@@ -372,7 +376,7 @@ WHERE created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
 GROUP BY username;
 
 -- System health overview
-CREATE VIEW system_health AS
+CREATE OR REPLACE VIEW system_health AS
 SELECT 
     (SELECT COUNT(*) FROM users WHERE status = 'active') as active_users,
     (SELECT COUNT(*) FROM user_sessions WHERE disconnected_at IS NULL) as active_sessions,
