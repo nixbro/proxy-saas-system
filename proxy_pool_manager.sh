@@ -246,7 +246,6 @@ start_proxy_instance() {
             --traffic-interval "$TRAFFIC_INTERVAL" \
             --control-url "$CONTROL_URL" \
             --control-sleep "$CONTROL_SLEEP" \
-            --sniff-domain \
             --log-file "$log_file" \
             --daemon 2>&1)
         proxy_exit_code=$?

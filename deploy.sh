@@ -34,19 +34,24 @@ NC='\033[0m'
 
 # Logging functions
 log_info() {
-    echo -e "${BLUE}[INFO]${NC} $1" | tee -a "$LOG_FILE"
+    echo -e "${BLUE}[INFO]${NC} $1"
+    # Only log to file if directory exists
+    [[ -d "$(dirname "$LOG_FILE")" ]] && echo "[$(date '+%Y-%m-%d %H:%M:%S')] [INFO] $1" >> "$LOG_FILE"
 }
 
 log_success() {
-    echo -e "${GREEN}[SUCCESS]${NC} $1" | tee -a "$LOG_FILE"
+    echo -e "${GREEN}[SUCCESS]${NC} $1"
+    [[ -d "$(dirname "$LOG_FILE")" ]] && echo "[$(date '+%Y-%m-%d %H:%M:%S')] [SUCCESS] $1" >> "$LOG_FILE"
 }
 
 log_warning() {
-    echo -e "${YELLOW}[WARNING]${NC} $1" | tee -a "$LOG_FILE"
+    echo -e "${YELLOW}[WARNING]${NC} $1"
+    [[ -d "$(dirname "$LOG_FILE")" ]] && echo "[$(date '+%Y-%m-%d %H:%M:%S')] [WARNING] $1" >> "$LOG_FILE"
 }
 
 log_error() {
-    echo -e "${RED}[ERROR]${NC} $1" | tee -a "$LOG_FILE"
+    echo -e "${RED}[ERROR]${NC} $1"
+    [[ -d "$(dirname "$LOG_FILE")" ]] && echo "[$(date '+%Y-%m-%d %H:%M:%S')] [ERROR] $1" >> "$LOG_FILE"
 }
 
 # Error handling
@@ -214,6 +219,10 @@ install_goproxy() {
     chmod +x proxy
     mv proxy /usr/local/bin/
 
+    # Clean up temporary files
+    rm -f goproxy.tar.gz
+    cd "$SCRIPT_DIR"
+
     # Verify installation
     if proxy --version >/dev/null 2>&1; then
         log_success "GoProxy installed successfully"
@@ -262,7 +271,7 @@ setup_directories() {
     fi
 
     # Create missing directories if they don't exist
-    mkdir -p "$INSTALL_DIR"/{database,tests,config}
+    mkdir -p "$INSTALL_DIR"/{database,tests,config,logs}
     mkdir -p "$WEB_DIR/api"/{internal,admin}
 
     # Set permissions
@@ -314,6 +323,9 @@ max_connections = 500
 innodb_buffer_pool_size = 256M
 EOF
             log_info "MariaDB configuration updated"
+            # Restart MariaDB to apply configuration changes
+            systemctl restart mariadb
+            sleep 2
         else
             log_info "MariaDB already configured"
         fi
@@ -585,9 +597,73 @@ setup_environment() {
         log_info "Please manually verify: $INSTALL_DIR/.env"
     fi
 
+    # Create saas-config.conf file
+    log_info "Creating SaaS configuration file..."
+    cat > "$INSTALL_DIR/config/saas-config.conf" <<EOF
+# Proxy SaaS System Configuration
+# ============================================================================
+
+# Server Configuration
+SERVER_HOST=$server_ip
+API_PORT=8889
+PROXY_START_PORT=4000
+PROXY_END_PORT=4999
+
+# Database Configuration
+DB_HOST=localhost
+DB_PORT=3306
+DB_NAME=proxy_saas
+DB_USER=proxy_user
+DB_PASS=secure_password_change_this
+
+# Redis Configuration
+REDIS_HOST=127.0.0.1
+REDIS_PORT=6379
+REDIS_PASSWORD=
+
+# Authentication URLs
+AUTH_URL=http://127.0.0.1:8889/api/internal/auth.php
+TRAFFIC_URL=http://127.0.0.1:8889/api/internal/traffic.php
+
+# GoProxy Configuration
+AUTH_CACHE_DURATION=300
+TRAFFIC_MODE=fast
+TRAFFIC_INTERVAL=5
+CONTROL_SLEEP=3
+
+# Logging
+LOG_LEVEL=INFO
+MAX_LOG_SIZE=100M
+LOG_RETENTION_DAYS=30
+
+# Performance
+MAX_RETRY_ATTEMPTS=3
+HEALTH_CHECK_INTERVAL=60
+RESTART_DELAY=10
+EOF
+
+    # Create sample proxy.txt if it doesn't exist
+    if [[ ! -f "$INSTALL_DIR/proxy.txt" ]]; then
+        log_info "Creating sample proxy configuration..."
+        cat > "$INSTALL_DIR/proxy.txt" <<EOF
+# Proxy Configuration File
+# Format: host:port:username:password
+# Example:
+# proxy1.example.com:8080:user1:pass1
+# proxy2.example.com:8080:user2:pass2
+
+# Add your real proxy servers below:
+# Replace these with your actual upstream proxies
+EOF
+    fi
+
     # Set permissions
     chmod 600 "$INSTALL_DIR/.env"
+    chmod 644 "$INSTALL_DIR/config/saas-config.conf"
+    chmod 644 "$INSTALL_DIR/proxy.txt"
     chown "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR/.env"
+    chown "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR/config/saas-config.conf"
+    chown "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR/proxy.txt"
 
     log_success "Environment configured with server IP: $server_ip"
 }
@@ -840,6 +916,13 @@ test_installation() {
     if command -v proxy >/dev/null 2>&1; then
         log_success "GoProxy installation: OK"
         ((tests_passed++))
+
+        # Test if proxy-saas user can run GoProxy
+        if sudo -u "$SERVICE_USER" proxy --version >/dev/null 2>&1; then
+            log_success "GoProxy accessible by service user: OK"
+        else
+            log_warning "GoProxy not accessible by service user"
+        fi
     else
         log_warning "GoProxy installation: NOT FOUND"
     fi
@@ -884,10 +967,31 @@ post_installation_setup() {
         log_info "Database schema already imported"
     fi
 
+    # Ensure all required directories exist
+    mkdir -p "$INSTALL_DIR"/{logs,config,database,tests}
+    mkdir -p "/var/log/$PROJECT_NAME"/{api,users,system,security}
+
     # Set proper permissions
     chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR"
     chown -R "www-data:www-data" "$WEB_DIR"
+    chown -R "$SERVICE_USER:$SERVICE_USER" "/var/log/$PROJECT_NAME"
     chmod +x "$INSTALL_DIR"/*.sh
+    chmod 755 "$INSTALL_DIR/logs"
+    chmod 755 "$INSTALL_DIR/config"
+
+    # Ensure configuration files exist
+    if [[ ! -f "$INSTALL_DIR/config/saas-config.conf" ]]; then
+        log_warning "Configuration file missing, creating default..."
+        # This should have been created in setup_environment, but create backup
+        touch "$INSTALL_DIR/config/saas-config.conf"
+        chown "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR/config/saas-config.conf"
+    fi
+
+    if [[ ! -f "$INSTALL_DIR/proxy.txt" ]]; then
+        log_warning "Proxy configuration missing, creating sample..."
+        echo "# Add your proxy servers here: host:port:username:password" > "$INSTALL_DIR/proxy.txt"
+        chown "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR/proxy.txt"
+    fi
 
     log_success "Post-installation setup completed"
 }
@@ -978,8 +1082,8 @@ EOF
 
 # Main execution
 main() {
-    # Create log directory
-    mkdir -p "$(dirname "$LOG_FILE")"
+    # Create log directory first
+    mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
     
     case "${1:-}" in
         --install)
