@@ -182,6 +182,15 @@ install_goproxy() {
     if command -v proxy >/dev/null 2>&1; then
         local version=$(proxy --version 2>&1 | head -1 || echo "unknown")
         log_success "GoProxy already installed: $version"
+
+        # Detect if it's free or commercial version
+        if proxy http --help 2>&1 | grep -q "log-file"; then
+            log_info "Commercial GoProxy version detected"
+            echo "GOPROXY_VERSION=commercial" >> "$INSTALL_DIR/.env"
+        else
+            log_info "Free GoProxy version detected"
+            echo "GOPROXY_VERSION=free" >> "$INSTALL_DIR/.env"
+        fi
         return 0
     fi
 
@@ -223,9 +232,18 @@ install_goproxy() {
     rm -f goproxy.tar.gz
     cd "$SCRIPT_DIR"
 
-    # Verify installation
+    # Verify installation and detect version
     if proxy --version >/dev/null 2>&1; then
         log_success "GoProxy installed successfully"
+
+        # Detect version type
+        if proxy http --help 2>&1 | grep -q "log-file"; then
+            log_info "Commercial GoProxy version detected"
+            echo "GOPROXY_VERSION=commercial" >> "$INSTALL_DIR/.env"
+        else
+            log_info "Free GoProxy version detected"
+            echo "GOPROXY_VERSION=free" >> "$INSTALL_DIR/.env"
+        fi
     else
         log_error "GoProxy installation failed"
         exit 1
@@ -568,6 +586,22 @@ setup_environment() {
     sed -i "s|DB_PASS=secure_password_change_this|DB_PASS=$db_password|g" "$INSTALL_DIR/.env" || log_warning "Could not update DB_PASS"
     sed -i "s|REDIS_PASSWORD=|REDIS_PASSWORD=$redis_password|g" "$INSTALL_DIR/.env" || log_warning "Could not update REDIS_PASSWORD"
 
+    # Add GoProxy version detection if not already present
+    if ! grep -q "GOPROXY_VERSION=" "$INSTALL_DIR/.env"; then
+        if command -v proxy >/dev/null 2>&1; then
+            if proxy http --help 2>&1 | grep -q "log-file"; then
+                echo "GOPROXY_VERSION=commercial" >> "$INSTALL_DIR/.env"
+                log_info "Added GoProxy version: commercial"
+            else
+                echo "GOPROXY_VERSION=free" >> "$INSTALL_DIR/.env"
+                log_info "Added GoProxy version: free"
+            fi
+        else
+            echo "GOPROXY_VERSION=free" >> "$INSTALL_DIR/.env"
+            log_info "Added GoProxy version: free (default)"
+        fi
+    fi
+
     # Additional fallback for SERVER_HOST if sed failed
     if ! grep -q "SERVER_HOST=$server_ip" "$INSTALL_DIR/.env"; then
         log_warning "Sed failed, using alternative method for SERVER_HOST"
@@ -671,10 +705,25 @@ EOF
 # Setup systemd service
 setup_systemd_service() {
     log_info "Setting up systemd service..."
-    
+
+    # Detect GoProxy version and choose appropriate script
+    local goproxy_version=$(grep "GOPROXY_VERSION=" "$INSTALL_DIR/.env" 2>/dev/null | cut -d'=' -f2 || echo "free")
+    local script_name="proxy_pool_manager.sh"
+    local service_description="Proxy SaaS System - Proxy Pool Manager"
+
+    if [[ "$goproxy_version" == "free" ]]; then
+        script_name="proxy_pool_manager_free.sh"
+        service_description="Proxy SaaS System - Free Version Proxy Pool Manager"
+        log_info "Configuring systemd service for free GoProxy version"
+    else
+        script_name="proxy_pool_manager.sh"
+        service_description="Proxy SaaS System - Commercial Proxy Pool Manager"
+        log_info "Configuring systemd service for commercial GoProxy version"
+    fi
+
     cat > "/etc/systemd/system/$PROJECT_NAME.service" <<EOF
 [Unit]
-Description=Proxy SaaS System - Proxy Pool Manager
+Description=$service_description
 After=network.target mariadb.service redis-server.service
 Wants=mariadb.service redis-server.service
 
@@ -683,9 +732,9 @@ Type=forking
 User=$SERVICE_USER
 Group=$SERVICE_USER
 WorkingDirectory=$INSTALL_DIR
-ExecStart=$INSTALL_DIR/proxy_pool_manager.sh start
-ExecReload=$INSTALL_DIR/proxy_pool_manager.sh reload
-ExecStop=$INSTALL_DIR/proxy_pool_manager.sh stop
+ExecStart=$INSTALL_DIR/$script_name start
+ExecReload=$INSTALL_DIR/$script_name reload
+ExecStop=$INSTALL_DIR/$script_name stop
 Restart=always
 RestartSec=10
 StandardOutput=journal
@@ -694,9 +743,13 @@ StandardError=journal
 [Install]
 WantedBy=multi-user.target
 EOF
-    
-    # Ensure proxy_pool_manager.sh is executable
-    chmod +x "$INSTALL_DIR/proxy_pool_manager.sh"
+
+    # Ensure the chosen script is executable
+    chmod +x "$INSTALL_DIR/$script_name"
+
+    # Also make both scripts executable for flexibility
+    chmod +x "$INSTALL_DIR/proxy_pool_manager.sh" 2>/dev/null || true
+    chmod +x "$INSTALL_DIR/proxy_pool_manager_free.sh" 2>/dev/null || true
 
     # Reload systemd and enable service
     systemctl daemon-reload
@@ -795,10 +848,22 @@ show_summary() {
     echo "   ⚙️  Configuration: $INSTALL_DIR/.env"
     echo "   🖥️  Server IP: $server_ip"
     echo ""
-    echo "🔗 API Endpoints:"
-    echo "   • Proxy List API: http://$server_ip:8889/api/proxies.php"
-    echo "   • Admin APIs: http://$server_ip:8889/api/admin/"
-    echo "   • Health Check: http://$server_ip:8889/api/health.php"
+    # Detect GoProxy version for summary
+    local goproxy_version=$(grep "GOPROXY_VERSION=" "$INSTALL_DIR/.env" 2>/dev/null | cut -d'=' -f2 || echo "unknown")
+    local proxy_script="proxy_pool_manager.sh"
+    if [[ "$goproxy_version" == "free" ]]; then
+        proxy_script="proxy_pool_manager_free.sh"
+    fi
+
+    echo "GoProxy Configuration:"
+    echo "   Version: $goproxy_version"
+    echo "   Manager Script: $proxy_script"
+    echo "   Proxy Ports: 4000-4010 (free) or 4000-4999 (commercial)"
+    echo ""
+    echo "API Endpoints:"
+    echo "   Proxy List API: http://$server_ip:8889/api/proxies.php"
+    echo "   Admin APIs: http://$server_ip:8889/api/admin/"
+    echo "   Health Check: http://$server_ip:8889/api/health.php"
     echo ""
     echo "🚀 Immediate Next Steps:"
     echo "   1. 📝 Edit configuration: sudo nano $INSTALL_DIR/.env"

@@ -237,16 +237,8 @@ start_proxy_instance() {
         local proxy_output
         local proxy_exit_code
 
+        # Use basic proxy command for free version (remove commercial features)
         proxy_output=$(proxy http -p ":$local_port" \
-            --auth-url "$auth_url" \
-            --auth-nouser \
-            --auth-cache "$AUTH_CACHE_DURATION" \
-            --traffic-url "$TRAFFIC_URL" \
-            --traffic-mode "$TRAFFIC_MODE" \
-            --traffic-interval "$TRAFFIC_INTERVAL" \
-            --control-url "$CONTROL_URL" \
-            --control-sleep "$CONTROL_SLEEP" \
-            --log-file "$log_file" \
             --daemon 2>&1)
         proxy_exit_code=$?
 
