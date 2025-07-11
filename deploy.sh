@@ -171,18 +171,49 @@ install_dependencies() {
 
 # Install GoProxy
 install_goproxy() {
+    log_info "Checking GoProxy installation..."
+
+    # Check if GoProxy is already installed
+    if command -v proxy >/dev/null 2>&1; then
+        local version=$(proxy --version 2>&1 | head -1 || echo "unknown")
+        log_success "GoProxy already installed: $version"
+        return 0
+    fi
+
     log_info "Installing GoProxy..."
-    
-    local goproxy_version="13.1"
-    local goproxy_url="https://github.com/snail007/goproxy/releases/download/v${goproxy_version}/proxy-linux-amd64.tar.gz"
-    
-    # Download and install GoProxy
+
+    # Try multiple download URLs for different versions
+    local goproxy_urls=(
+        "https://github.com/snail007/goproxy/releases/download/v13.1/proxy-linux-amd64.tar.gz"
+        "https://github.com/snail007/goproxy/releases/download/v12.9/proxy-linux-amd64.tar.gz"
+        "https://github.com/snail007/goproxy/releases/latest/download/proxy-linux-amd64.tar.gz"
+    )
+
     cd /tmp
-    wget -O goproxy.tar.gz "$goproxy_url"
+    local download_success=false
+
+    for url in "${goproxy_urls[@]}"; do
+        log_info "Trying download from: $url"
+        if wget -O goproxy.tar.gz "$url" 2>/dev/null; then
+            download_success=true
+            break
+        fi
+    done
+
+    if [ "$download_success" = false ]; then
+        log_error "Failed to download GoProxy from all sources"
+        log_error "Please install GoProxy manually:"
+        log_error "1. Download from: https://github.com/snail007/goproxy/releases"
+        log_error "2. Extract and copy 'proxy' binary to /usr/local/bin/"
+        log_error "3. Run: chmod +x /usr/local/bin/proxy"
+        exit 1
+    fi
+
+    # Extract and install
     tar -xzf goproxy.tar.gz
     chmod +x proxy
     mv proxy /usr/local/bin/
-    
+
     # Verify installation
     if proxy --version >/dev/null 2>&1; then
         log_success "GoProxy installed successfully"
